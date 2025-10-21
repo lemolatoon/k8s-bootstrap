@@ -3,15 +3,19 @@
 # https://docs.cilium.io/en/stable/installation/kubernetes/helm/
 
 - name: Add Cilium Helm repo
-  shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG={{ kubeconfig_path }}
+  become: true
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export KUBECONFIG="{{ kubeconfig_path }}"
     helm repo add cilium https://helm.cilium.io || true
     helm repo update
+  args:
+    executable: /bin/bash
   changed_when: false
 
+
 - name: Install/Upgrade Cilium
-  shell: |
+  ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     helm upgrade --install cilium cilium/cilium \
@@ -19,12 +23,16 @@
       --set kubeProxyReplacement=false \
       --set ipam.mode=kubernetes \
       --wait
+  args:
+    executable: /bin/bash
   register: cilium_install
   changed_when: "'release' in cilium_install.stdout or 'deployed' in cilium_install.stdout or cilium_install.rc == 0"
 
 - name: Wait for Cilium pods to be Ready
-  shell: |
+  ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     kubectl -n kube-system rollout status ds/cilium --timeout=5m
+  args:
+    executable: /bin/bash
   changed_when: false

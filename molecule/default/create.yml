@@ -1,0 +1,60 @@
+---
+- name: Create (Vagrant up & generate native inventory without Python)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    scenario_dir: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}"
+    project_dir: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | default(playbook_dir, true) }}"
+    inv_dir: "{{ scenario_dir }}/inventory"
+    inv_file: "{{ inv_dir }}/01-hosts.yml"
+
+  tasks:
+    - name: Ensure inventory directory exists
+      ansible.builtin.file:
+        path: "{{ inv_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Bring up Vagrant VMs
+      ansible.builtin.shell: vagrant up
+      register: vagrant_up
+      changed_when: "'up to date' not in vagrant_up.stdout"
+
+    - name: vagrant ssh-config → YAML lines
+      ansible.builtin.shell: >-
+        vagrant ssh-config 2>/dev/null |
+        sed '/^$/d' |
+        awk '$1 == "Host" {print "- "$1": "$2} $1 != "Host" {print "  "$1": "$2}'
+      register: r
+
+    - name: Parse YAML lines to list of host dicts
+      ansible.builtin.set_fact:
+        vagrant_hosts: "{{ r.stdout | from_yaml }}"
+
+    - name: Write native inventory (inventory/01-hosts.yml)
+      ansible.builtin.copy:
+        dest: "{{ inv_file }}"
+        mode: "0644"
+        content: |
+          # Molecule native inventory (generated from `vagrant ssh-config`)
+          all:
+            hosts:
+          {% for item in vagrant_hosts %}
+              {{ item.Host }}:
+                ansible_host: {{ item.HostName }}
+                ansible_user: {{ item.User }}
+                ansible_port: {{ item.Port }}
+                ansible_ssh_private_key_file: {{ item.IdentityFile }}
+          {% endfor %}
+
+    - name: (Optional) Add constructed inventory (group "vagrant")
+      ansible.builtin.copy:
+        dest: "{{ inv_dir }}/02-constructed.yml"
+        mode: "0644"
+        content: |
+          plugin: ansible.builtin.constructed
+          strict: false
+          groups:
+            vagrant: inventory_hostname is defined

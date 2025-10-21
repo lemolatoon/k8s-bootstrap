@@ -1,0 +1,118 @@
+---
+- name: Verify Kubernetes components from each node
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    # 検証対象の名前空間
+    namespaces:
+      - argocd
+      - ingress-nginx
+      - kube-system
+
+    # 各ノードで探索する kubeconfig 候補
+    kubeconfig_candidates:
+      - /root/.kube/config
+      - /etc/kubernetes/admin.conf
+
+    # `kubectl get` が不安定なタイミングに備えて軽くリトライ
+    verify_retries: 10
+    verify_delay: 6   # 秒
+
+  tasks:
+    - name: Find kubeconfig candidates (per node)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ kubeconfig_candidates }}"
+      register: kc
+
+    - name: Choose kubeconfig (per node)
+      ansible.builtin.set_fact:
+        kubeconfig_path: >-
+          {{
+            (kc.results
+             | selectattr('stat.exists', 'defined')
+             | selectattr('stat.exists')
+             | map(attribute='stat.path')
+             | list
+             | first) | default(omit)
+          }}
+
+    - name: Fail if kubeconfig not found (per node)
+      ansible.builtin.fail:
+        msg: >-
+          No kubeconfig found on {{ inventory_hostname }}.
+          Tried: {{ kubeconfig_candidates | join(', ') }}
+      when: kubeconfig_path is not defined
+
+    - name: Show chosen kubeconfig (per node)
+      ansible.builtin.debug:
+        msg: "[{{ inventory_hostname }}] Using kubeconfig: {{ kubeconfig_path }}"
+
+    - name: Ensure kubectl is present (per node)
+      ansible.builtin.command:
+        argv: [ "bash", "-lc", "command -v kubectl" ]
+      register: kubectl_check
+      changed_when: false
+      failed_when: kubectl_check.rc != 0
+
+    # ---- 各名前空間で Pod が見えることを確認 ----
+    - name: Get pods in each namespace (per node)
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - pods
+          - -n
+          - "{{ item }}"
+          - -o
+          - name
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: pods_list
+      loop: "{{ namespaces }}"
+      retries: "{{ verify_retries }}"
+      delay: "{{ verify_delay }}"
+      until: pods_list.rc == 0
+      changed_when: false
+      failed_when: >
+        pods_list.rc != 0 or
+        (pods_list.stdout is defined and (pods_list.stdout | trim) == "")
+
+    - name: Print pod names per namespace (per node)
+      ansible.builtin.debug:
+        msg: |
+          [{{ inventory_hostname }}] ======= {{ item.item }} =======
+          {{ (item.stdout | default('')) | trim }}
+      loop: "{{ pods_list.results }}"
+
+    # ---- Cilium の Pod が存在することを確認（kube-system）----
+    - name: Check Cilium pods exist in kube-system (per node)
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - pods
+          - -n
+          - kube-system
+          - -l
+          - k8s-app=cilium
+          - -o
+          - name
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: cilium_pods
+      retries: "{{ verify_retries }}"
+      delay: "{{ verify_delay }}"
+      until: cilium_pods.rc == 0
+      changed_when: false
+      failed_when: >
+        cilium_pods.rc != 0 or
+        (cilium_pods.stdout is defined and (cilium_pods.stdout | trim) == "")
+
+    - name: Show Cilium pods (per node)
+      ansible.builtin.debug:
+        msg: |
+          [{{ inventory_hostname }}] ✅ Cilium pods:
+          {{ (cilium_pods.stdout | default('')) | trim }}

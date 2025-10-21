@@ -8,11 +8,23 @@
     state: directory
     mode: '0755'
 
-- name: Add Kubernetes APT repository key
-  shell: |
-    set -o errexit -o nounset -o pipefail
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/Release.key | \
-      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+- name: Download Kubernetes APT Release.key
+  become: true
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/Release.key"
+    dest: /tmp/kubernetes-Release.key
+    mode: "0644"
+    force: true
+
+- name: Convert key to keyring (gpg --dearmor)
+  become: true
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - -o
+      - /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      - /tmp/kubernetes-Release.key
   args:
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
@@ -89,25 +101,57 @@
   args:
     creates: /etc/kubernetes/kubelet.conf
 
-- name: Wait for all nodes to be Ready
-  when: inventory_hostname in groups['control_plane']
-  shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG=/root/.kube/config
-    # Wait up to ~5 minutes
-    for i in $(seq 1 60); do
-      not_ready=$(kubectl get nodes --no-headers | awk '$2!="Ready"{print $1}' | wc -l)
-      if [ "$not_ready" -eq 0 ]; then exit 0; fi; sleep 5;
-    done
-    echo "Nodes not ready in time" >&2; exit 1
-  register: wait_nodes
-  changed_when: false
-
 - name: Label public ingress worker node
-  when: inventory_hostname in groups['control_plane']
-  shell: |
-    set -o errexit -o nounset -o pipefail
+  when: "'control_plane' in group_names"
+  become: true
+  ansible.builtin.shell: |
+    set -euo pipefail
     export KUBECONFIG=/root/.kube/config
     node_name="{{ hostvars[public_ingress_inventory_host].k8s_node_name | default(public_ingress_inventory_host) }}"
+    kubectl get node "$node_name" >/dev/null 2>&1
     kubectl label node "$node_name" {{ ingress_nginx.node_label_key }}={{ ingress_nginx.node_label_value }} --overwrite
+  args:
+    executable: /bin/bash
+  register: label_public
+  retries: 60
+  delay: 5
+  until: label_public.rc == 0
   changed_when: false
+
+- name: Decide source control-plane host for kubeconfig (run once)
+  run_once: true
+  ansible.builtin.set_fact:
+    kubeconfig_src_host: >-
+      {{
+        'cp-arm64'
+        if ('cp-arm64' in groups.get('control_plane', []))
+        else (groups.get('control_plane', [])[0])
+      }}
+  failed_when: kubeconfig_src_host is not defined
+
+- name: Slurp kubeconfig from control plane (run once, delegated)
+  run_once: true
+  delegate_to: "{{ kubeconfig_src_host }}"
+  become: true
+  ansible.builtin.slurp:
+    src: /root/.kube/config
+  register: kubeconfig_slurped
+
+- name: Set decoded kubeconfig content (run once)
+  run_once: true
+  ansible.builtin.set_fact:
+    kubeconfig_content: "{{ kubeconfig_slurped.content | b64decode }}"
+
+- name: Ensure /root/.kube exists on each node
+  become: true
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+
+- name: Distribute kubeconfig from cp-arm64 to each node
+  become: true
+  ansible.builtin.copy:
+    dest: /root/.kube/config
+    content: "{{ hostvars[groups['all'][0]].kubeconfig_content | default(kubeconfig_content) }}"
+    mode: '0600'

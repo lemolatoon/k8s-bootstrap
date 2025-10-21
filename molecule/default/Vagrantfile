@@ -1,0 +1,50 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # 利用ボックス（Ubuntu 24.04）
+  config.vm.box = "bento/ubuntu-24.04"
+  # config.vm.box_check_update = true
+
+  # 共通SSHユーザー
+  # config.ssh.username = "ubuntu"
+
+  # ノード定義
+  nodes = [
+    {
+      name: "cp-arm64",
+      ip:   "192.168.10.10"
+    },
+    {
+      name: "wk-public-amd64",
+      ip:   "192.168.10.11"
+    },
+    {
+      name: "wk-amd64",
+      ip:   "192.168.10.12"
+    }
+  ]
+
+  nodes.each do |node_def|
+    config.vm.define node_def[:name] do |node|
+      node.vm.hostname = node_def[:name]
+      node.vm.network :private_network, ip: node_def[:ip]
+
+      node.vm.provider :libvirt do |libvirt|
+        # libvirt.driver = "kvm"  # 通常は kvm
+        libvirt.memory = 2048
+        libvirt.cpus   = 2
+        # ストレージプールやその他設定を必要なら記載
+        # libvirt.storage_pool_name = "default"
+        # libvirt.network_name = "vagrant-libvirt"
+      end
+
+      # プロビジョニング（簡易例）
+      # node.vm.provision "shell", inline: <<-SHELL
+      #   echo "Provisioning #{node_def[:name]}"
+      #   sudo apt-get update
+      #   sudo apt-get upgrade -y
+      # SHELL
+    end
+  end
+end

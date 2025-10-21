@@ -3,25 +3,31 @@
 # https://argo-cd.readthedocs.io/en/stable/getting_started/
 
 - name: Create argocd namespace
-  shell: |
+  ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     kubectl create namespace argocd || true
+  args:
+    executable: /bin/bash
   changed_when: false
 
 - name: Install Argo CD via official manifests
-  shell: |
+  ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  args:
+    executable: /bin/bash
   register: argocd_apply
   changed_when: "'created' in argocd_apply.stdout or 'configured' in argocd_apply.stdout"
 
 - name: Wait for Argo CD server to be Ready
-  shell: |
+  ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     kubectl -n argocd rollout status deploy/argocd-server --timeout=5m
+  args:
+    executable: /bin/bash
   changed_when: false
 
 - name: Optionally create Ingress for Argo CD via ingress-nginx
@@ -33,8 +39,10 @@
         dest: /root/argocd-ingress.yaml
         mode: '0644'
     - name: Apply Argo CD Ingress
-      shell: |
+      ansible.builtin.shell: |
         set -o errexit -o nounset -o pipefail
         export KUBECONFIG={{ kubeconfig_path }}
         kubectl apply -f /root/argocd-ingress.yaml
+      args:
+        executable: /bin/bash
       changed_when: true

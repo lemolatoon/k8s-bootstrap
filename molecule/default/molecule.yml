@@ -1,0 +1,73 @@
+---
+# Molecule (ansible-native) configuration
+# 参考: Ansible native inventory example / Ansible-Native Configuration
+# https://ansible.readthedocs.io/projects/molecule/examples/ansible_native_inventory/
+# https://ansible.readthedocs.io/projects/molecule/ansible-native/
+
+dependency:
+  name: galaxy
+  options:
+    ignore-certs: false
+    ignore-errors: false
+    # 役割・コレクションの取得元。公式の既定は roles=requirements.yml, collections=collections.yml
+    role-file: requirements.yml
+    requirements-file: requirements.yml
+
+ansible:
+  cfg:
+    defaults:
+      # ansible.cfg へ反映される（公式: cfg.defaults）:
+      host_key_checking: false
+      verbosity: 1
+      # inventory は executor.args で --inventory を渡すためここでは指定しない
+    ssh_connection:
+      pipelining: true
+
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+    ANSIBLE_LOAD_CALLBACK_PLUGINS: "1"
+
+  executor:
+    backend: ansible-playbook     # 公式: backend は ansible-playbook または ansible-navigator
+    args:
+      ansible_playbook:
+        # 公式例と同じくシナリオ直下の inventory/ をネイティブ在庫のルートにする
+        - --inventory=${MOLECULE_SCENARIO_DIRECTORY}/inventory/
+        - --diff
+        - --force-handlers
+      ansible_navigator:
+        - --mode stdout
+        - --pull-policy missing
+        - --execution-environment-image ghcr.io/ansible/community-ansible-dev-tools:latest
+        - --inventory=${MOLECULE_SCENARIO_DIRECTORY}/inventory/
+
+  playbooks:
+    # ansible-native ではこの playbooks マップで全アクションのプレイブックを指定（公式に合致）
+    create: create.yml
+    converge: converge.yml
+    destroy: destroy.yml
+    cleanup: cleanup.yml
+    prepare: prepare.yml
+    side_effect: side_effect.yml
+    verify: verify.yml
+
+scenario:
+  name: default
+  # ansible-native では platforms は不要（pre ansible-native 構文と明記）:contentReference[oaicite:2]{index=2}
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy
+
+# ansible-native では verifier は ansible を利用（デフォルト）
+verifier:
+  name: ansible

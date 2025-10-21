@@ -1,0 +1,9 @@
+all:
+  children:
+    control_plane:
+      hosts:
+        cp-arm64: {}
+    workers:
+      hosts:
+        wk-amd64: {}
+        wk-public-amd64: {}

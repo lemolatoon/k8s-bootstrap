@@ -34,7 +34,7 @@
       br_netfilter
 
 - name: Load kernel modules immediately
-  modprobe:
+  community.general.modprobe:
     name: "{{ item }}"
     state: present
   loop:

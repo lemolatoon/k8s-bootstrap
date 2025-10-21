@@ -1,0 +1,23 @@
+---
+- name: Destroy (teardown Vagrant & clean inventory)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    inv_dir: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/inventory"
+
+  tasks:
+    - name: Destroy Vagrant VMs
+      ansible.builtin.shell: vagrant destroy -f
+      register: vagrant_destroy
+      changed_when: "'Destroying' in vagrant_destroy.stdout or 'is not running' not in vagrant_destroy.stdout"
+
+    - name: Remove generated inventory
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ inv_dir }}/01-hosts.yml"
+        - "{{ inv_dir }}/02-constructed.yml"
+      ignore_errors: true
