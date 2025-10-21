@@ -1,0 +1,72 @@
+---
+# Based on Kubernetes official docs:
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+
+- name: Ensure required packages are present
+  apt:
+    update_cache: true
+    cache_valid_time: 600
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+    state: present
+
+- name: Disable swap (runtime)
+  command: swapoff -a
+  when: ansible_swaptotal_mb | default(0) | int > 0
+  changed_when: false
+
+- name: Comment out any swap entries in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Ensure kernel modules are configured
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+- name: Load kernel modules immediately
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Set sysctl params for Kubernetes networking
+  copy:
+    dest: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+- name: Apply sysctl params
+  command: sysctl --system
+  changed_when: false
+
+- name: Optionally manage UFW (open 80/443 or disable)
+  block:
+    - name: Ensure ufw is installed
+      apt:
+        name: ufw
+        state: present
+    - name: Allow HTTP/HTTPS
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["80", "443"]
+    - name: Ensure ufw is enabled
+      ufw:
+        state: enabled
+        policy: allow
+  when: manage_ufw | default(false) | bool

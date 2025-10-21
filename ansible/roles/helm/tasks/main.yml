@@ -1,0 +1,22 @@
+---
+# Install Helm v3 via official script:
+# https://helm.sh/docs/intro/install/
+
+- name: Check if helm is installed
+  command: helm version --short
+  register: helm_version
+  ignore_errors: true
+  changed_when: false
+
+- name: Download get-helm-3 script
+  when: helm_version.rc != 0
+  get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /usr/local/bin/get-helm-3
+    mode: '0755'
+
+- name: Install Helm
+  when: helm_version.rc != 0
+  shell: /usr/local/bin/get-helm-3
+  args:
+    creates: /usr/local/bin/helm

@@ -1,0 +1,45 @@
+---
+# Install containerd and configure systemd cgroups per official docs:
+# https://kubernetes.io/docs/setup/production-environment/container-runtimes/#containerd
+
+- name: Install containerd
+  apt:
+    update_cache: true
+    name: containerd
+    state: present
+
+- name: Ensure containerd config directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Generate default containerd config if absent
+  shell: |
+    set -o errexit -o nounset -o pipefail
+    [ -f /etc/containerd/config.toml ] || containerd config default > /etc/containerd/config.toml
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Ensure SystemdCgroup = true in containerd config
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup\s*=\s*false'
+    replace: 'SystemdCgroup = true'
+
+- name: Restart and enable containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: true
+
+- name: Configure crictl to use containerd
+  copy:
+    dest: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+    mode: '0644'

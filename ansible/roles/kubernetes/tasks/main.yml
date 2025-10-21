@@ -1,0 +1,113 @@
+---
+# Install kubeadm/kubelet/kubectl per official docs:
+# https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+
+- name: Create keyring directory for Kubernetes APT repo
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Kubernetes APT repository key
+  shell: |
+    set -o errexit -o nounset -o pipefail
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/Release.key | \
+      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes APT repository
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/ /
+    mode: '0644'
+
+- name: Install kubeadm, kubelet, kubectl
+  apt:
+    update_cache: true
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Hold Kubernetes packages
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Enable kubelet service
+  systemd:
+    name: kubelet
+    enabled: true
+    state: started
+
+- name: Initialize control plane (kubeadm init)
+  when: inventory_hostname in groups['control_plane']
+  block:
+    - name: Render kubeadm configuration
+      template:
+        src: kubeadm-config.yaml.j2
+        dest: /root/kubeadm-config.yaml
+        mode: '0644'
+
+    - name: Run kubeadm init if not yet initialized
+      shell: kubeadm init --config /root/kubeadm-config.yaml
+      args:
+        creates: /etc/kubernetes/admin.conf
+
+    - name: Set up kubeconfig for root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Copy admin.conf to kubeconfig
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        mode: '0600'
+
+    - name: Get kubeadm join command
+      shell: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+    - name: Save join command for workers
+      set_fact:
+        kubeadm_join_command: "{{ join_cmd.stdout }} --cri-socket unix:///run/containerd/containerd.sock"
+
+- name: Join workers to cluster
+  when: inventory_hostname in (groups['workers'] | default([]) + groups['workers_public'] | default([]))
+  shell: "{{ hostvars[groups['control_plane'][0]].kubeadm_join_command }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+
+- name: Wait for all nodes to be Ready
+  when: inventory_hostname in groups['control_plane']
+  shell: |
+    set -o errexit -o nounset -o pipefail
+    export KUBECONFIG=/root/.kube/config
+    # Wait up to ~5 minutes
+    for i in $(seq 1 60); do
+      not_ready=$(kubectl get nodes --no-headers | awk '$2!="Ready"{print $1}' | wc -l)
+      if [ "$not_ready" -eq 0 ]; then exit 0; fi; sleep 5;
+    done
+    echo "Nodes not ready in time" >&2; exit 1
+  register: wait_nodes
+  changed_when: false
+
+- name: Label public ingress worker node
+  when: inventory_hostname in groups['control_plane']
+  shell: |
+    set -o errexit -o nounset -o pipefail
+    export KUBECONFIG=/root/.kube/config
+    node_name="{{ hostvars[public_ingress_inventory_host].k8s_node_name | default(public_ingress_inventory_host) }}"
+    kubectl label node "$node_name" {{ ingress_nginx.node_label_key }}={{ ingress_nginx.node_label_value }} --overwrite
+  changed_when: false

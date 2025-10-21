@@ -1,0 +1,21 @@
+---
+- name: Bootstrap Kubernetes cluster with kubeadm + Cilium + Ingress + Argo CD
+  hosts: all
+  become: true
+  vars:
+    kubeconfig_path: /root/.kube/config
+  roles:
+    - role: common
+    - role: containerd
+    - role: kubernetes
+
+- name: Post-install add-ons (run once on control plane)
+  hosts: control_plane
+  become: true
+  vars:
+    kubeconfig_path: /root/.kube/config
+  roles:
+    - role: helm
+    - role: cilium
+    - role: ingress_nginx
+    - role: argocd

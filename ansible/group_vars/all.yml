@@ -1,0 +1,28 @@
+# Global cluster settings
+cluster_name: homelab
+pod_subnet: 10.244.0.0/16
+service_subnet: 10.96.0.0/12
+
+# Kubernetes minor version channel per official repo (pkgs.k8s.io)
+# See: https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+kubernetes_minor_channel: v1.33
+
+# Control plane advertise address (control-plane node LAN IP)
+control_plane_ip: 192.168.10.10
+
+# Public ingress node inventory name (must match k8s node name or set k8s_node_name per host)
+public_ingress_inventory_host: wk-public-amd64
+
+# Ingress Controller settings
+ingress_nginx:
+  hostNetwork: true
+  kind: DaemonSet
+  node_label_key: ingress
+  node_label_value: public
+
+# Argo CD settings
+install_argocd_ingress: false
+argocd_host: argocd.lemolatoo.net
+
+# Manage firewall with ufw (optional)
+manage_ufw: false

@@ -1,0 +1,21 @@
+controller:
+  kind: {{ ingress_nginx.kind }}
+  hostNetwork: {{ ingress_nginx.hostNetwork | bool | lower }}
+  daemonset:
+    useHostPort: true
+  nodeSelector:
+    {{ ingress_nginx.node_label_key }}: {{ ingress_nginx.node_label_value }}
+  service:
+    enabled: true
+    type: ClusterIP
+  publishService:
+    enabled: false
+  metrics:
+    enabled: false
+  admissionWebhooks:
+    enabled: true
+  updateStrategy:
+    type: RollingUpdate
+
+defaultBackend:
+  enabled: true
