@@ -9,9 +9,9 @@ dependency:
   options:
     ignore-certs: false
     ignore-errors: false
-    # 役割・コレクションの取得元。公式の既定は roles=requirements.yml, collections=collections.yml
-    role-file: requirements.yml
-    requirements-file: requirements.yml
+    # 役割・コレクションの取得元（リポジトリの ansible/ 配下を参照）
+    role-file: ${MOLECULE_SCENARIO_DIRECTORY}/requirements.yml
+    collections-file: ${MOLECULE_SCENARIO_DIRECTORY}/requirements.yml
 
 ansible:
   cfg:

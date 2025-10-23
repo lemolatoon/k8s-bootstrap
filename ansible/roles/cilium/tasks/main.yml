@@ -20,8 +20,8 @@
     export KUBECONFIG={{ kubeconfig_path }}
     helm upgrade --install cilium cilium/cilium \
       --namespace kube-system \
-      --set kubeProxyReplacement=false \
-      --set ipam.mode=kubernetes \
+      --set kubeProxyReplacement=true \
+      --set nodeIPAM.enabled=true \
       --wait
   args:
     executable: /bin/bash

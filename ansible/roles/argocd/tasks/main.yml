@@ -2,7 +2,10 @@
 # Install Argo CD following official docs:
 # https://argo-cd.readthedocs.io/en/stable/getting_started/
 
-- name: Create argocd namespace
+- name: Include private vars
+  include_vars:
+    file: vars/private.yml
+- name: Create argocd namespace (idempotent)
   ansible.builtin.shell: |
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
@@ -30,19 +33,62 @@
     executable: /bin/bash
   changed_when: false
 
-- name: Optionally create Ingress for Argo CD via ingress-nginx
-  when: install_argocd_ingress | default(false) | bool
-  block:
-    - name: Render Argo CD Ingress
-      template:
-        src: ingress.yaml.j2
-        dest: /root/argocd-ingress.yaml
-        mode: '0644'
-    - name: Apply Argo CD Ingress
-      ansible.builtin.shell: |
-        set -o errexit -o nounset -o pipefail
-        export KUBECONFIG={{ kubeconfig_path }}
-        kubectl apply -f /root/argocd-ingress.yaml
-      args:
-        executable: /bin/bash
-      changed_when: true
+#######################################################################
+# 1) Argo CD に GitHub private repo 認証情報（HTTPS + PAT）を Secret で登録
+#######################################################################
+# 参考: Private Repositories / Declarative Setup（Secret: secret-type=repository）
+# PAT はパスワードとして利用。ユーザー名は 'x-access-token' を慣例的に使用可。
+- name: Create Argo CD repository credentials (GitHub HTTPS + PAT)
+  ansible.builtin.shell: |
+    set -o errexit -o nounset -o pipefail
+    export KUBECONFIG={{ kubeconfig_path }}
+    cat <<EOF | kubectl -n argocd apply -f -
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: github-home-k8s-yaml
+      namespace: argocd
+      labels:
+        argocd.argoproj.io/secret-type: repository
+    stringData:
+      type: git
+      url: "{{ repo_url_https }}"
+      username: "x-access-token"
+      password: "{{ github_token }}"
+    EOF
+  args:
+    executable: /bin/bash
+
+#######################################################################
+# 2) private repo をローカルに取得し、manifests/argocd の Application を適用
+#######################################################################
+- name: Clone private repo containing Argo CD Application yamls
+  no_log: false  # トークンをログに出さない
+  vars:
+    # repo_url_https 変数からトークン入りURLを生成
+    repo_url_tokenized: "{{ repo_url_https | regex_replace('^https://', 'https://x-access-token:' ~ github_token ~ '@') }}"
+  ansible.builtin.git:
+    repo: "{{ repo_url_tokenized }}"
+    dest: "{{ repo_dest }}"
+    version: HEAD
+    update: yes
+    force: false
+
+
+- name: Find Argo CD Application manifests
+  ansible.builtin.find:
+    paths: "{{ applications_dir }}"
+    patterns: "*.yaml"
+    recurse: true
+  register: argocd_app_manifests
+
+- name: Apply Argo CD Application manifests
+  ansible.builtin.shell: |
+    set -o errexit -o nounset -o pipefail
+    export KUBECONFIG={{ kubeconfig_path }}
+    kubectl -n argocd apply -f "{{ item.path }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ argocd_app_manifests.files }}"
+
+# （任意）最初の同期を待ちたい場合は、Application ごとに status を確認するタスクを追加可能

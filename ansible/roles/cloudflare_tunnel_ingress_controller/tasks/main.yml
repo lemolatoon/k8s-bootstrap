@@ -1,0 +1,19 @@
+---
+- name: Include private vars
+  include_vars:
+    file: vars/private.yml
+
+- name: Install Cloudflare Tunnel Ingress Controller via Helm
+  ansible.builtin.shell: |
+    set -o errexit -o nounset -o pipefail
+    export KUBECONFIG={{ kubeconfig_path }}
+    helm upgrade --install --wait \
+      -n cloudflare-tunnel-ingress-controller --create-namespace \
+      cloudflare-tunnel-ingress-controller \
+      strrl.dev/cloudflare-tunnel-ingress-controller \
+      --set=cloudflare.apiToken="{{ cloudflare_api_token }}" \
+      --set=cloudflare.accountId="{{ cloudflare_account_id }}" \
+      --set=cloudflare.tunnelName="{{ cloudflare_tunnel_name }}"
+  args:
+    executable: /bin/bash
+

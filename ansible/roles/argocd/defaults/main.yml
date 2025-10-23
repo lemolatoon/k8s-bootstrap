@@ -1,0 +1,5 @@
+# 同期対象リポジトリ
+repo_url_https: "https://github.com/lemolatoon/home-k8s-yaml.git"
+# ローカルにクローンする場所（Application YAML を apply するため）
+repo_dest: "/root/home-k8s-yaml"
+applications_dir: "{{ repo_dest }}/manifests/argocd"

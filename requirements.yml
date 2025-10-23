@@ -1,0 +1,6 @@
+---
+# Ansible collections required by playbooks/roles.
+collections:
+  - name: community.general
+    version: "11.4.0"
+  - name: kubernetes.core
