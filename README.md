@@ -59,3 +59,32 @@ Notes:
 - If your inventory names differ from hostnames, set `k8s_node_name` per host in inventory so node labeling targets the correct Kubernetes Node name.
 - If UFW is enabled and you want automation to open 80/443, set `manage_ufw: true`.
 - For multiple public nodes or VIPs, consider kube-vip or MetalLB according to their official docs.
+
+## Steps
+```
+uv sync
+uv run molecule verify
+```
+
+### macos
+remote:
+```
+sudo apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager
+sudo systemctl enable --now libvirtd
+sudo usermod -aG libvirt,kvm $USER 
+```
+
+macos:
+```
+brew install libvirt pkg-config
+pipx install molecule ansible-core
+# Download vagrant from installer
+# https://developer.hashicorp.com/vagrant/install
+brew services start libvirt
+vagrant plugin install vagrant-libvirt
+
+uv sync
+source .venv/bin/activate
+export LIBVIRT_DEFAULT_URI="qemu+ssh://sslab/system"
+molecule verify
+```

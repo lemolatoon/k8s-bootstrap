@@ -1,0 +1,9 @@
+[project]
+name = "k8s-bootstrap"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "molecule>=25.9.0",
+]
