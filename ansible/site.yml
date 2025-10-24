@@ -17,5 +17,4 @@
   roles:
     - role: helm
     - role: cilium
-    - role: cloudflare_tunnel_ingress_controller
     - role: argocd

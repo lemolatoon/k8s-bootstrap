@@ -8,7 +8,7 @@
     # 検証対象の名前空間
     namespaces:
       - argocd
-      - ingress-nginx
+      - cloudflare-tunnel-ingress-controller
       - kube-system
 
     # 各ノードで探索する kubeconfig 候補

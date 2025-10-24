@@ -19,6 +19,12 @@
     set -o errexit -o nounset -o pipefail
     export KUBECONFIG={{ kubeconfig_path }}
     kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+    kubectl -n argocd patch configmap argocd-cmd-params-cm \
+      --type merge \
+      -p '{"data":{"server.insecure":"true"}}'
+    kubectl -n argocd patch configmap argocd-cm \
+      --type merge \
+      -p '{"data":{"url":"{{ argocd_external_url }}"}}'
   args:
     executable: /bin/bash
   register: argocd_apply
