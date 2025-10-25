@@ -1,8 +1,7 @@
 all:
   vars:
     ansible_user: ubuntu
-    # Optional: SSH key file path if not using agent
-    # ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
   children:
     control_plane:
       hosts:
@@ -14,8 +13,6 @@ all:
         wk-public-amd64:
           ansible_host: 192.168.10.11
           k8s_node_name: wk-public-amd64
-          # Optional: document public/global IP (used operationally, not by playbook)
-          public_ip: 203.0.113.10
     workers:
       hosts:
         wk-amd64:

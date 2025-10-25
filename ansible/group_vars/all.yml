@@ -10,15 +10,10 @@ kubernetes_minor_channel: v1.33
 # Control plane advertise address (control-plane node LAN IP)
 control_plane_ip: 192.168.10.10
 
-# Public ingress node inventory name (must match k8s node name or set k8s_node_name per host)
-public_ingress_inventory_host: wk-public-amd64
-
-# Ingress Controller settings
-ingress_nginx:
-  hostNetwork: true
-  kind: DaemonSet
-  node_label_key: ingress
-  node_label_value: public
+public_ip_host: wk-public-amd64
+public_ip_label:
+  key: ip
+  value: public
 
 # Raspberry Pi (or ARM SBC) node labeling
 # - Set which inventory hosts should get the raspi label
@@ -30,9 +25,14 @@ raspi_label:
   key: device
   value: raspi
 
-# Argo CD settings
-install_argocd_ingress: false
 argocd_host: argocd.lemolatoo.net
 
 # Manage firewall with ufw (optional)
 manage_ufw: false
+
+# Argo CD settings (moved from role defaults)
+# - Private token is set in: ansible/roles/argocd/vars/private.yml (see private.example.yml)
+repo_url_https: "https://github.com/lemolatoon/home-k8s-yaml.git"
+repo_dest: "/root/home-k8s-yaml"
+applications_dir: "{{ repo_dest }}/manifests/argocd"
+argocd_external_url: "https://{{ argocd_host }}"

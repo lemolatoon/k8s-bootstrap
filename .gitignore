@@ -1,3 +1,5 @@
 # Ignore private vars used by roles
 ansible/**/vars/private.yml
 .venv
+# Ignore local inventory file
+ansible/inventory/hosts.yml

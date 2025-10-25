@@ -107,9 +107,9 @@
   ansible.builtin.shell: |
     set -euo pipefail
     export KUBECONFIG=/root/.kube/config
-    node_name="{{ hostvars[public_ingress_inventory_host].k8s_node_name | default(public_ingress_inventory_host) }}"
+    node_name="{{ hostvars[public_ip_host].k8s_node_name | default(public_ip_host) }}"
     kubectl get node "$node_name" >/dev/null 2>&1
-    kubectl label node "$node_name" {{ ingress_nginx.node_label_key }}={{ ingress_nginx.node_label_value }} --overwrite
+    kubectl label node "$node_name" {{ public_ip_label.key }}={{ public_ip_label.value }} --overwrite
   args:
     executable: /bin/bash
   register: label_public
