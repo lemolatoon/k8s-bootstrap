@@ -74,11 +74,9 @@
       loop: "{{ namespaces }}"
       retries: "{{ verify_retries }}"
       delay: "{{ verify_delay }}"
-      until: pods_list.rc == 0
+      until: pods_list.rc == 0 and (pods_list.stdout | default('') | trim) != ""
       changed_when: false
-      failed_when: >
-        pods_list.rc != 0 or
-        (pods_list.stdout is defined and (pods_list.stdout | trim) == "")
+      failed_when: false
 
     - name: Print pod names per namespace (per node)
       ansible.builtin.debug:
@@ -105,11 +103,9 @@
       register: cilium_pods
       retries: "{{ verify_retries }}"
       delay: "{{ verify_delay }}"
-      until: cilium_pods.rc == 0
+      until: cilium_pods.rc == 0 and (cilium_pods.stdout | default('') | trim) != ""
       changed_when: false
-      failed_when: >
-        cilium_pods.rc != 0 or
-        (cilium_pods.stdout is defined and (cilium_pods.stdout | trim) == "")
+      failed_when: false
 
     - name: Show Cilium pods (per node)
       ansible.builtin.debug:
