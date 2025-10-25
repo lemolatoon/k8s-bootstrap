@@ -20,6 +20,16 @@ ingress_nginx:
   node_label_key: ingress
   node_label_value: public
 
+# Raspberry Pi (or ARM SBC) node labeling
+# - Set which inventory hosts should get the raspi label
+# - The role will label the corresponding Kubernetes Node name
+#   with `<raspi_label.key>=<raspi_label.value>`
+raspi_inventory_hosts:
+  - cp-arm64
+raspi_label:
+  key: device
+  value: raspi
+
 # Argo CD settings
 install_argocd_ingress: false
 argocd_host: argocd.lemolatoo.net

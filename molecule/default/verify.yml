@@ -116,3 +116,74 @@
         msg: |
           [{{ inventory_hostname }}] ✅ Cilium pods:
           {{ (cilium_pods.stdout | default('')) | trim }}
+
+    # ---- Verify Raspberry Pi label on designated nodes (run once on control plane) ----
+    - name: Select a control-plane host for verification
+      run_once: true
+      ansible.builtin.set_fact:
+        verify_cp_host: >-
+          {{
+            'cp-arm64' if ('control_plane' in groups and 'cp-arm64' in groups['control_plane'])
+            else (groups['control_plane'][0] if ('control_plane' in groups and (groups['control_plane'] | length) > 0) else groups['all'][0])
+          }}
+
+    - name: Find kubeconfig on verification host
+      run_once: true
+      delegate_to: "{{ verify_cp_host }}"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ kubeconfig_candidates }}"
+      register: verify_kc
+
+    - name: Choose kubeconfig on verification host
+      run_once: true
+      ansible.builtin.set_fact:
+        verify_kubeconfig_path: >-
+          {{
+            (verify_kc.results
+             | selectattr('stat.exists', 'defined')
+             | selectattr('stat.exists')
+             | map(attribute='stat.path')
+             | list
+             | first) | default(omit)
+          }}
+
+    - name: Fail if kubeconfig not found on verification host
+      run_once: true
+      ansible.builtin.fail:
+        msg: >-
+          No kubeconfig found on {{ verify_cp_host }}. Tried: {{ kubeconfig_candidates | join(', ') }}
+      when: verify_kubeconfig_path is not defined
+
+    - name: Verify Raspberry Pi labels exist on target nodes
+      run_once: true
+      delegate_to: "{{ verify_cp_host }}"
+      when: (raspi_inventory_hosts | default([])) | length > 0
+      vars:
+        _node_name: "{{ hostvars[item].k8s_node_name | default(item) }}"
+        _label_key: "{{ raspi_label.key }}"
+        _label_val: "{{ raspi_label.value }}"
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - get
+          - node
+          - "{{ _node_name }}"
+          - -o
+          - "jsonpath={.metadata.labels.{{ _label_key }}}"
+      environment:
+        KUBECONFIG: "{{ verify_kubeconfig_path }}"
+      loop: "{{ raspi_inventory_hosts | default([]) }}"
+      register: raspi_label_check
+      changed_when: false
+      failed_when: >-
+        raspi_label_check.rc != 0 or
+        (raspi_label_check.stdout | default('')) != _label_val
+
+    - name: Show Raspberry Pi label check result
+      run_once: true
+      when: (raspi_inventory_hosts | default([])) | length > 0
+      ansible.builtin.debug:
+        msg: |
+          ✅ Verified raspi label on nodes:
+          {{ (raspi_inventory_hosts | default([])) | join(', ') }} -> {{ raspi_label.key }}={{ raspi_label.value }}

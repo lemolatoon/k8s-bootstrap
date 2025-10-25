@@ -1,0 +1,8 @@
+all:
+  vars:
+    # Mark cp-arm64 as Raspberry Pi-like node in Molecule
+    raspi_inventory_hosts:
+      - cp-arm64
+    raspi_label:
+      key: device
+      value: raspi
