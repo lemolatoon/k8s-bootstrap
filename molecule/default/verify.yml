@@ -20,6 +20,20 @@
     verify_retries: 10
     verify_delay: 6   # 秒
 
+    # 期待するバージョン（指定があるものだけ検証）
+    # - 未指定の場合はスキップします（柔軟に上書き可能: -e など）
+    expected_versions:
+      # 例: v1.33 （クライアント/サーバ/各バイナリのマイナー整合性を確認）
+      kubernetes_minor: "{{ kubernetes_minor_channel | default('') }}"
+      # 例: v3.15 または v3（helm version --short の先頭一致）
+      helm: "{{ helm_expected_version | default('') }}"
+      # 例: 1.15.5（helm list -n kube-system の app_version 整合）
+      cilium_app: "{{ cilium_expected_app_version | default('') }}"
+      # 例: v2.10（argocd-server コンテナイメージのタグ先頭一致）
+      argocd: "{{ argocd_expected_version | default('') }}"
+      # 例: 1.7.18（containerd --version 出力に含まれること）
+      containerd: "{{ containerd_expected_version | default('') }}"
+
   tasks:
     - name: Find kubeconfig candidates (per node)
       ansible.builtin.stat:
@@ -113,6 +127,86 @@
           [{{ inventory_hostname }}] ✅ Cilium pods:
           {{ (cilium_pods.stdout | default('')) | trim }}
 
+    # ---- ローカルバイナリのバージョン確認（各ノード） ----
+    - name: Get kubeadm version (per node)
+      ansible.builtin.command:
+        argv: [ kubeadm, version, -o, short ]
+      register: ver_kubeadm
+      changed_when: false
+      failed_when: false
+
+    - name: Get kubelet version (per node)
+      ansible.builtin.command:
+        argv: [ bash, -lc, "kubelet --version | awk '{print $2}'" ]
+      register: ver_kubelet
+      changed_when: false
+      failed_when: false
+
+    - name: Get kubectl client version (per node, JSON)
+      ansible.builtin.command:
+        argv: [ kubectl, version, --client, -o, json ]
+      register: ver_kubectl_client
+      changed_when: false
+      failed_when: false
+
+    - name: Parse kubectl client gitVersion (per node)
+      ansible.builtin.set_fact:
+        _kubectl_client_json: "{{ (ver_kubectl_client.stdout | default('{}')) | from_json | default({}) }}"
+        kubectl_client_version: "{{ _kubectl_client_json.clientVersion.gitVersion | default('') }}"
+
+    - name: Get Kubernetes client+server version (per node, JSON)
+      ansible.builtin.command:
+        argv: [ kubectl, version, -o, json ]
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: ver_k8s_version
+      changed_when: false
+      failed_when: false
+
+    - name: Parse Kubernetes server gitVersion (per node)
+      ansible.builtin.set_fact:
+        _k8s_version_json: "{{ (ver_k8s_version.stdout | default('{}')) | from_json | default({}) }}"
+        k8s_server_version: "{{ _k8s_version_json.serverVersion.gitVersion | default('') }}"
+
+    - name: Get containerd version (per node)
+      ansible.builtin.command:
+        argv: [ bash, -lc, "containerd --version 2>/dev/null || true" ]
+      register: ver_containerd
+      changed_when: false
+      failed_when: false
+
+    - name: Assert Kubernetes minor matches when specified (per node)
+      when: (expected_versions.kubernetes_minor | default('')) | length > 0
+      ansible.builtin.assert:
+        that:
+          - ver_kubeadm.rc == 0
+          - ver_kubelet.rc == 0
+          - ver_kubectl_client.rc == 0
+          - ver_k8s_version.rc == 0
+          - ver_kubeadm.stdout | trim is search('^' ~ (expected_versions.kubernetes_minor | string | replace('.', '\\.')))
+          - ver_kubelet.stdout | trim is search('^' ~ (expected_versions.kubernetes_minor | string | replace('.', '\\.')))
+          - kubectl_client_version | trim is search('^' ~ (expected_versions.kubernetes_minor | string | replace('.', '\\.')))
+          - k8s_server_version | trim is search('^' ~ (expected_versions.kubernetes_minor | string | replace('.', '\\.')))
+        fail_msg: >-
+          Kubernetes minor mismatch on {{ inventory_hostname }}.
+          Expected: {{ expected_versions.kubernetes_minor }}
+          Got: kubeadm={{ ver_kubeadm.stdout | default('') }}, kubelet={{ ver_kubelet.stdout | default('') }},
+               kubectl={{ kubectl_client_version | default('') }}, server={{ k8s_server_version | default('') }}
+        success_msg: >-
+          ✅ Kubernetes minor OK on {{ inventory_hostname }}: {{ expected_versions.kubernetes_minor }}
+
+    - name: Assert containerd version contains expected (per node)
+      when: (expected_versions.containerd | default('')) | length > 0 and (ver_containerd.stdout | trim) != ''
+      ansible.builtin.assert:
+        that:
+          - ver_containerd.stdout is search(expected_versions.containerd | string | replace('.', '\\.'))
+        fail_msg: >-
+          containerd version mismatch on {{ inventory_hostname }}.
+          Expected to contain: {{ expected_versions.containerd }}
+          Got: {{ ver_containerd.stdout | default('') }}
+        success_msg: >-
+          ✅ containerd OK on {{ inventory_hostname }}: {{ ver_containerd.stdout | trim }}
+
     # ---- Verify Raspberry Pi label on designated nodes (run once on control plane) ----
     - name: Select a control-plane host for verification
       run_once: true
@@ -183,3 +277,90 @@
         msg: |
           ✅ Verified raspi label on nodes:
           {{ (raspi_inventory_hosts | default([])) | join(', ') }} -> {{ raspi_label.key }}={{ raspi_label.value }}
+
+    # ---- コントロールプレーン上で Helm/Cilium/Argo CD のバージョン確認（run once） ----
+    - name: Get helm version (run once on control plane)
+      run_once: true
+      delegate_to: "{{ verify_cp_host }}"
+      ansible.builtin.command:
+        argv: [ bash, -lc, "helm version --short" ]
+      register: ver_helm
+      changed_when: false
+      failed_when: false
+
+    - name: Assert helm version matches when specified
+      run_once: true
+      when: (expected_versions.helm | default('')) | length > 0 and (ver_helm.stdout | trim) != ''
+      ansible.builtin.assert:
+        that:
+          - ver_helm.stdout | trim is search('^' ~ (expected_versions.helm | string | replace('.', '\\.')))
+        fail_msg: >-
+          Helm version mismatch on {{ verify_cp_host }}.
+          Expected startswith: {{ expected_versions.helm }}
+          Got: {{ ver_helm.stdout | default('') }}
+        success_msg: >-
+          ✅ Helm OK on {{ verify_cp_host }}: {{ ver_helm.stdout | trim }}
+
+    - name: Get Cilium release info from Helm (run once)
+      run_once: true
+      delegate_to: "{{ verify_cp_host }}"
+      ansible.builtin.command:
+        argv: [ helm, list, -n, kube-system, --filter, ^cilium$, -o, json ]
+      register: cilium_list
+      changed_when: false
+      failed_when: false
+
+    - name: Parse Cilium Helm list JSON (run once)
+      run_once: true
+      ansible.builtin.set_fact:
+        cilium_list_json: "{{ (cilium_list.stdout | default('[]')) | from_json | default([]) }}"
+
+    - name: Assert Cilium app version matches when specified
+      run_once: true
+      when: (expected_versions.cilium_app | default('')) | length > 0 and (cilium_list_json | length) > 0
+      ansible.builtin.assert:
+        that:
+          - (cilium_list_json[0].app_version | string) is match('^' ~ (expected_versions.cilium_app | string | replace('.', '\\.')))
+        fail_msg: >-
+          Cilium app version mismatch on {{ verify_cp_host }}.
+          Expected app_version startswith: {{ expected_versions.cilium_app }}
+          Got: {{ (cilium_list_json[0].app_version | string) if (cilium_list_json | length) > 0 else 'N/A' }}
+        success_msg: >-
+          ✅ Cilium OK on {{ verify_cp_host }}: app_version={{ cilium_list_json[0].app_version }} chart={{ cilium_list_json[0].chart }}
+
+    - name: Get Argo CD server image tag (run once)
+      run_once: true
+      delegate_to: "{{ verify_cp_host }}"
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - argocd
+          - get
+          - deploy
+          - argocd-server
+          - -o
+          - jsonpath={.spec.template.spec.containers[0].image}
+      environment:
+        KUBECONFIG: "{{ verify_kubeconfig_path | default(kubeconfig_path) }}"
+      register: argocd_image
+      changed_when: false
+      failed_when: false
+
+    - name: Extract Argo CD tag (run once)
+      run_once: true
+      ansible.builtin.set_fact:
+        argocd_tag: "{{ (argocd_image.stdout | default('') ) | regex_replace('^.*/', '') }}"
+
+    - name: Assert Argo CD version matches when specified
+      run_once: true
+      when: (expected_versions.argocd | default('')) | length > 0 and (argocd_tag | trim) != ''
+      ansible.builtin.assert:
+        that:
+          - argocd_tag | trim is search('^' ~ (expected_versions.argocd | string | replace('.', '\\.')))
+        fail_msg: >-
+          Argo CD version mismatch on {{ verify_cp_host }}.
+          Expected tag startswith: {{ expected_versions.argocd }}
+          Got: {{ argocd_tag }} (image={{ argocd_image.stdout | default('') }})
+        success_msg: >-
+          ✅ Argo CD OK on {{ verify_cp_host }}: {{ argocd_tag }}

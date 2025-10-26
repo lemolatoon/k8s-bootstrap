@@ -35,14 +35,85 @@
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/ /
     mode: '0644'
 
-- name: Install kubeadm, kubelet, kubectl
+- name: Unhold Kubernetes packages before versioned install
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Determine Kubernetes package version (from repo)
+  block:
+    - name: Set kubernetes minor (strip leading v)
+      ansible.builtin.set_fact:
+        k8s_minor_no_v: "{{ kubernetes_minor_channel | regex_replace('^v', '') }}"
+
+    - name: Query available kubeadm versions via apt-cache (madison)
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -lc
+          - >-
+            apt-get update -y >/dev/null 2>&1 || true;
+            apt-cache madison kubeadm | awk -F'|' '{gsub(/ /, "", $2); print $2}'
+      register: madison_kubeadm
+      changed_when: false
+
+    - name: Build candidate list by patch if provided
+      ansible.builtin.set_fact:
+        k8s_candidates_patch: >-
+          {{
+            (
+              (madison_kubeadm.stdout_lines | default([]))
+              | select('search', '^' ~ (kubernetes_patch_version | string) ~ '-')
+              | list
+            )
+          }}
+      when: kubernetes_patch_version is defined
+
+    - name: Choose desired version from patch candidate list
+      ansible.builtin.set_fact:
+        k8s_pkg_version: "{{ k8s_candidates_patch[0] }}"
+      when: kubernetes_patch_version is defined and (k8s_candidates_patch | default([]) | length) > 0
+
+    - name: Build candidate list by minor channel (latest within minor)
+      ansible.builtin.set_fact:
+        k8s_candidates_minor: >-
+          {{
+            (
+              (madison_kubeadm.stdout_lines | default([]))
+              | select('search', '^' ~ ((k8s_minor_no_v | string) ~ '.'))
+              | list
+            )
+          }}
+      when: k8s_pkg_version is not defined
+
+    - name: Choose desired version from minor candidate list
+      ansible.builtin.set_fact:
+        k8s_pkg_version: "{{ k8s_candidates_minor[0] }}"
+      when: k8s_pkg_version is not defined and (k8s_candidates_minor | default([]) | length) > 0
+
+    
+
+    - name: Fail if Kubernetes package version not determined
+      ansible.builtin.fail:
+        msg: >-
+          Could not determine Kubernetes package version for channel={{ kubernetes_minor_channel }}
+          patch={{ kubernetes_patch_version | default('auto') }}. Ensure repo is reachable and contains packages.
+      when: k8s_pkg_version is not defined
+
+- name: Install kubeadm, kubelet, kubectl to exact version (allow downgrade)
   apt:
     update_cache: true
     name:
-      - kubelet
-      - kubeadm
-      - kubectl
+      - "kubelet={{ k8s_pkg_version }}"
+      - "kubeadm={{ k8s_pkg_version }}"
+      - "kubectl={{ k8s_pkg_version }}"
     state: present
+    allow_downgrade: true
+
 
 - name: Hold Kubernetes packages
   dpkg_selections:
