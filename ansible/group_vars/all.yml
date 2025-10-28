@@ -8,7 +8,7 @@ service_subnet: 10.96.0.0/12
 kubernetes_minor_channel: v1.33
 
 # Control plane advertise address (control-plane node LAN IP)
-control_plane_ip: 192.168.10.10
+control_plane_ip: 100.106.99.58
 
 public_ip_host: wk-public-amd64
 public_ip_label:

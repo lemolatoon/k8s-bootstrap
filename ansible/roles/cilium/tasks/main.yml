@@ -22,6 +22,8 @@
       --namespace kube-system \
       --set kubeProxyReplacement=true \
       --set nodeIPAM.enabled=true \
+      --set k8sServiceHost={{ control_plane_ip }} \
+      --set k8sServicePort=6443 \
       --wait
   args:
     executable: /bin/bash

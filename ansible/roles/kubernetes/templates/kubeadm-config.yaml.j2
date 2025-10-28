@@ -1,4 +1,4 @@
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   advertiseAddress: {{ control_plane_ip }}
@@ -6,9 +6,9 @@ nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
     cgroup-driver: systemd
----
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
+controlPlaneEndpoint: "{{ control_plane_ip }}:6443"
 clusterName: {{ cluster_name }}
 networking:
   podSubnet: {{ pod_subnet }}

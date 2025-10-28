@@ -2,6 +2,7 @@
 - name: Bootstrap Kubernetes cluster with kubeadm + Cilium + Ingress + Argo CD
   hosts: all
   become: true
+  become_user: root
   vars:
     kubeconfig_path: /root/.kube/config
   roles:
@@ -12,6 +13,7 @@
 - name: Post-install add-ons (run once on control plane)
   hosts: control_plane
   become: true
+  become_user: root
   vars:
     kubeconfig_path: /root/.kube/config
   roles:

@@ -35,6 +35,10 @@
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/ /
     mode: '0644'
 
+- name: Gather installed package facts
+  ansible.builtin.package_facts:
+    manager: apt
+
 - name: Unhold Kubernetes packages before versioned install
   dpkg_selections:
     name: "{{ item }}"
@@ -43,6 +47,7 @@
     - kubelet
     - kubeadm
     - kubectl
+  when: ansible_facts.packages[item] is defined
 
 - name: Determine Kubernetes package version (from repo)
   block:
@@ -157,18 +162,79 @@
         remote_src: true
         mode: '0600'
 
+    - name: Wait for Kubernetes API to respond
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - --kubeconfig=/root/.kube/config
+          - version
+      register: kube_api_ready
+      until: kube_api_ready.rc == 0
+      retries: 20
+      delay: 15
+      changed_when: false
+
     - name: Get kubeadm join command
       shell: kubeadm token create --print-join-command
       register: join_cmd
       changed_when: false
+      retries: 2
+      delay: 15
+      until: join_cmd.rc == 0
 
-    - name: Save join command for workers
+    # --- 空白で split して N 番目をそのまま抜き出す ---
+    # 例: "kubeadm join 100.106.99.58:6443 --token 376... --discovery-token-ca-cert-hash sha256:..."
+    # idx:   0       1          2             3     4      5                                6
+    - name: Split join command into tokens (on first CP)
       set_fact:
-        kubeadm_join_command: "{{ join_cmd.stdout }} --cri-socket unix:///run/containerd/containerd.sock"
+        join_tokens_list: "{{ join_cmd.stdout | ansible.builtin.split }}"
+      run_once: true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    - name: Set parsed join parts (on first CP)
+      set_fact:
+        join_endpoint: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[2] }}"
+        join_token: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[4] }}"
+        join_cahash_full: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[6] }}"
+      run_once: true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+    # 念のための検証（最低 7 トークンある / 必須位置に期待するフラグがある）
+    - name: Validate parsed tokens (on first CP)
+      fail:
+        msg: "Unexpected join command format: {{ join_cmd.stdout }}"
+      when: >
+        hostvars[groups['control_plane'][0]].join_tokens_list | length < 7 or
+        hostvars[groups['control_plane'][0]].join_tokens_list[3] != '--token' or
+        hostvars[groups['control_plane'][0]].join_tokens_list[5] != '--discovery-token-ca-cert-hash'
+      run_once: true
+      delegate_to: "{{ groups['control_plane'][0] }}"
+
+# 3) 各ワーカーノード用の JoinConfiguration (v1beta4) を生成
+- name: Prepare kubeadm join config (per node)
+  when: inventory_hostname in (groups['workers'] | default([]) + groups['workers_public'] | default([]))
+  copy:
+    dest: /root/kubeadm-join.yaml
+    mode: '0644'
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: JoinConfiguration
+      discovery:
+        bootstrapToken:
+          apiServerEndpoint: "{{ hostvars[groups['control_plane'][0]].join_endpoint }}"
+          token: "{{ hostvars[groups['control_plane'][0]].join_token }}"
+          caCertHashes:
+          - "{{ hostvars[groups['control_plane'][0]].join_cahash_full }}"
+      nodeRegistration:
+        name: "{{ k8s_node_name | default(inventory_hostname) }}"
+        criSocket: "unix:///run/containerd/containerd.sock"
+        kubeletExtraArgs:
+        - name: node-ip
+          value: "{{ ansible_host }}"
 
 - name: Join workers to cluster
   when: inventory_hostname in (groups['workers'] | default([]) + groups['workers_public'] | default([]))
-  shell: "{{ hostvars[groups['control_plane'][0]].kubeadm_join_command }}"
+  shell: kubeadm join --config /root/kubeadm-join.yaml -v=5
   args:
     creates: /etc/kubernetes/kubelet.conf
 
@@ -184,7 +250,7 @@
   args:
     executable: /bin/bash
   register: label_public
-  retries: 60
+  retries: 3
   delay: 5
   until: label_public.rc == 0
   changed_when: false

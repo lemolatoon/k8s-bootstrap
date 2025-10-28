@@ -7,7 +7,7 @@ all:
       hosts:
         cp-arm64:
           ansible_host: 192.168.10.10
-          k8s_node_name: cp-arm64
+          k8s_node_name: cp-arm64 # = hostname
     workers_public:
       hosts:
         wk-public-amd64:
