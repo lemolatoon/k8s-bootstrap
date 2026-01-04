@@ -24,6 +24,9 @@
       --set nodeIPAM.enabled=true \
       --set k8sServiceHost={{ control_plane_ip }} \
       --set k8sServicePort=6443 \
+      --set ipam.mode=cluster-pool \
+      --set ipam.operator.clusterPoolIPv4MaskSize=24 \
+      --set ipam.operator.clusterPoolIPv4PodCIDRList[0]=172.20.0.0/16 \
       --wait
   args:
     executable: /bin/bash
