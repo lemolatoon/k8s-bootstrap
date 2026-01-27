@@ -139,6 +139,7 @@
 #######################################################################
 - name: Clone private repo containing Argo CD Application yamls
   no_log: false  # トークンをログに出さない
+  vars:
     # repo_url_https 変数からトークン入りURLを生成
     repo_url_tokenized: "{{ repo_url_https | regex_replace('^https://', 'https://x-access-token:' ~ github_token ~ '@') }}"
   ansible.builtin.git:

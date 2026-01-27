@@ -15,6 +15,7 @@
     dest: /tmp/kubernetes-Release.key
     mode: "0644"
     force: true
+  check_mode: false
 
 - name: Convert key to keyring (gpg --dearmor)
   become: true
@@ -27,6 +28,7 @@
       - /tmp/kubernetes-Release.key
   args:
     creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  check_mode: false
 
 - name: Add Kubernetes APT repository
   copy:
@@ -34,6 +36,7 @@
     content: |
       deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_channel }}/deb/ /
     mode: '0644'
+  check_mode: false
 
 - name: Gather installed package facts
   ansible.builtin.package_facts:
@@ -61,10 +64,11 @@
           - bash
           - -lc
           - >-
-            apt-get update -y >/dev/null 2>&1 || true;
+            apt-get update -y >/dev/null 2>&1;
             apt-cache madison kubeadm | awk -F'|' '{gsub(/ /, "", $2); print $2}'
       register: madison_kubeadm
       changed_when: false
+      check_mode: false
 
     - name: Build candidate list by patch if provided
       ansible.builtin.set_fact:
@@ -118,6 +122,7 @@
       - "kubectl={{ k8s_pkg_version }}"
     state: present
     allow_downgrade: true
+    allow_change_held_packages: "{{ ansible_check_mode | default(false) | bool }}"
 
 
 - name: Hold Kubernetes packages
@@ -174,10 +179,26 @@
       delay: 15
       changed_when: false
 
-    - name: Get existing kubeadm token (if any)
+    - name: Get a non-expired kubeadm token if available
       ansible.builtin.shell: |
         set -o errexit -o nounset -o pipefail
-        kubeadm token list --kubeconfig /etc/kubernetes/admin.conf | awk 'NR>1 {print $1; exit}'
+        now_epoch="$(date -u +%s)"
+        kubeadm token list \
+          --kubeconfig /etc/kubernetes/admin.conf \
+          -o jsonpath='{range .tokens[*]}{.token}{" "}{.expires}{"\n"}{end}' \
+        | while read -r token expires; do
+            [ -z "${token:-}" ] && continue
+            # Treat tokens without expiry (or with special markers) as valid.
+            if [ -z "${expires:-}" ] || [ "${expires}" = "<never>" ] || [ "${expires}" = "<forever>" ]; then
+              echo "${token}"
+              exit 0
+            fi
+            expires_epoch="$(date -u -d "${expires}" +%s 2>/dev/null || echo 0)"
+            if [ "${expires_epoch}" -gt "${now_epoch}" ]; then
+              echo "${token}"
+              exit 0
+            fi
+          done
       args:
         executable: /bin/bash
       register: kubeadm_token_existing
@@ -257,7 +278,7 @@
     set -euo pipefail
     export KUBECONFIG=/root/.kube/config
     node_name="{{ hostvars[public_ip_host].k8s_node_name | default(public_ip_host) }}"
-    kubectl get node "$node_name" >/dev/null 2>&1
+    kubectl get node "$node_name"
     kubectl label node "$node_name" {{ public_ip_label.key }}={{ public_ip_label.value }} --overwrite
   args:
     executable: /bin/bash
