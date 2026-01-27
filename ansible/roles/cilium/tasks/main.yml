@@ -22,7 +22,7 @@
       --namespace kube-system \
       --set kubeProxyReplacement=false \
       --set nodeIPAM.enabled=true \
-      --set k8sServiceHost={{ control_plane_ip }} \
+      --set k8sServiceHost={{ hostvars[control_plane_ip | default(groups['control_plane'][0])].ansible_host }} \
       --set k8sServicePort=6443 \
       --set ipam.mode=cluster-pool \
       --set ipam.operator.clusterPoolIPv4MaskSize=24 \
