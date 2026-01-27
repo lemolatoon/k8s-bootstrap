@@ -174,39 +174,51 @@
       delay: 15
       changed_when: false
 
-    - name: Get kubeadm join command
-      shell: kubeadm token create --print-join-command
-      register: join_cmd
+    - name: Get existing kubeadm token (if any)
+      ansible.builtin.shell: |
+        set -o errexit -o nounset -o pipefail
+        kubeadm token list --kubeconfig /etc/kubernetes/admin.conf | awk 'NR>1 {print $1; exit}'
+      args:
+        executable: /bin/bash
+      register: kubeadm_token_existing
       changed_when: false
-      retries: 2
-      delay: 15
-      until: join_cmd.rc == 0
+      failed_when: false
 
-    # --- 空白で split して N 番目をそのまま抜き出す ---
-    # 例: "kubeadm join 100.106.99.58:6443 --token 376... --discovery-token-ca-cert-hash sha256:..."
-    # idx:   0       1          2             3     4      5                                6
-    - name: Split join command into tokens (on first CP)
-      set_fact:
-        join_tokens_list: "{{ join_cmd.stdout | ansible.builtin.split }}"
-      run_once: true
-      delegate_to: "{{ groups['control_plane'][0] }}"
+    - name: Create kubeadm token when none exists
+      ansible.builtin.command:
+        argv:
+          - kubeadm
+          - token
+          - create
+          - --kubeconfig
+          - /etc/kubernetes/admin.conf
+      register: kubeadm_token_created
+      when: (kubeadm_token_existing.stdout | default('') | trim) == ''
 
-    - name: Set parsed join parts (on first CP)
-      set_fact:
-        join_endpoint: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[2] }}"
-        join_token: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[4] }}"
-        join_cahash_full: "{{ hostvars[groups['control_plane'][0]].join_tokens_list[6] }}"
-      run_once: true
-      delegate_to: "{{ groups['control_plane'][0] }}"
+    - name: Compute CA cert hash for discovery
+      ansible.builtin.shell: |
+        set -o errexit -o nounset -o pipefail
+        openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt \
+        | openssl pkey -pubin -outform der 2>/dev/null \
+        | openssl dgst -sha256 -hex \
+        | awk '{print $2}'
+      args:
+        executable: /bin/bash
+      register: kubeadm_ca_hash
+      changed_when: false
 
-    # 念のための検証（最低 7 トークンある / 必須位置に期待するフラグがある）
-    - name: Validate parsed tokens (on first CP)
-      fail:
-        msg: "Unexpected join command format: {{ join_cmd.stdout }}"
-      when: >
-        hostvars[groups['control_plane'][0]].join_tokens_list | length < 7 or
-        hostvars[groups['control_plane'][0]].join_tokens_list[3] != '--token' or
-        hostvars[groups['control_plane'][0]].join_tokens_list[5] != '--discovery-token-ca-cert-hash'
+    - name: Set join parameters (run once on first control plane)
+      ansible.builtin.set_fact:
+        join_endpoint: "{{ hostvars[control_plane_ip | default(groups['control_plane'][0])].ansible_host }}:6443"
+        join_token: >-
+          {{
+            (
+              kubeadm_token_existing.stdout
+              if (kubeadm_token_existing.stdout | default('') | trim) != ''
+              else kubeadm_token_created.stdout
+            ) | trim
+          }}
+        join_cahash_full: "sha256:{{ kubeadm_ca_hash.stdout | trim }}"
       run_once: true
       delegate_to: "{{ groups['control_plane'][0] }}"
 

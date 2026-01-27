@@ -5,30 +5,99 @@
 - name: Include private vars
   include_vars:
     file: vars/private.yml
-- name: Create argocd namespace (idempotent)
-  ansible.builtin.shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG={{ kubeconfig_path }}
-    kubectl create namespace argocd || true
-  args:
-    executable: /bin/bash
-  changed_when: false
 
-- name: Install Argo CD via official manifests
-  ansible.builtin.shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG={{ kubeconfig_path }}
-    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-    kubectl -n argocd patch configmap argocd-cmd-params-cm \
-      --type merge \
-      -p '{"data":{"server.insecure":"true"}}'
-    kubectl -n argocd patch configmap argocd-cm \
-      --type merge \
-      -p '{"data":{"url":"{{ argocd_external_url }}"}}'
-  args:
-    executable: /bin/bash
-  register: argocd_apply
-  changed_when: "'created' in argocd_apply.stdout or 'configured' in argocd_apply.stdout"
+- name: Set local kubeconfig path for delegated tasks
+  ansible.builtin.set_fact:
+    local_kubeconfig_path: "/tmp/kubeconfig-{{ cluster_name }}.yaml"
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+
+- name: Ensure kubeconfig content is available for delegated tasks
+  ansible.builtin.assert:
+    that:
+      - hostvars[groups['all'][0]].kubeconfig_content is defined
+    fail_msg: >-
+      kubeconfig_content is not defined. Run the kubernetes role first so the
+      kubeconfig is slurped and distributed.
+  delegate_to: localhost
+  run_once: true
+
+- name: Write kubeconfig locally for delegated tasks
+  ansible.builtin.copy:
+    dest: "{{ hostvars['localhost'].local_kubeconfig_path }}"
+    content: "{{ hostvars[groups['all'][0]].kubeconfig_content }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Ensure argocd namespace exists
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: argocd
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Download Argo CD install manifest
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+    dest: /tmp/argocd-install.yaml
+    mode: "0644"
+    force: false
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Apply Argo CD install manifest
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    namespace: argocd
+    src: /tmp/argocd-install.yaml
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Configure argocd-server insecure flag
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    merge_type: merge
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cmd-params-cm
+        namespace: argocd
+      data:
+        server.insecure: "true"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Configure Argo CD external URL
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    merge_type: merge
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cm
+        namespace: argocd
+      data:
+        url: "{{ argocd_external_url }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
 
 - name: Wait for Argo CD server to be Ready
   ansible.builtin.shell: |
@@ -45,32 +114,31 @@
 # 参考: Private Repositories / Declarative Setup（Secret: secret-type=repository）
 # PAT はパスワードとして利用。ユーザー名は 'x-access-token' を慣例的に使用可。
 - name: Create Argo CD repository credentials (GitHub HTTPS + PAT)
-  ansible.builtin.shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG={{ kubeconfig_path }}
-    cat <<EOF | kubectl -n argocd apply -f -
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: github-home-k8s-yaml
-      namespace: argocd
-      labels:
-        argocd.argoproj.io/secret-type: repository
-    stringData:
-      type: git
-      url: "{{ repo_url_https }}"
-      username: "x-access-token"
-      password: "{{ github_token }}"
-    EOF
-  args:
-    executable: /bin/bash
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: github-home-k8s-yaml
+        namespace: argocd
+        labels:
+          argocd.argoproj.io/secret-type: repository
+      stringData:
+        type: git
+        url: "{{ repo_url_https }}"
+        username: "x-access-token"
+        password: "{{ github_token }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
 
 #######################################################################
 # 2) private repo をローカルに取得し、manifests/argocd の Application を適用
 #######################################################################
 - name: Clone private repo containing Argo CD Application yamls
   no_log: false  # トークンをログに出さない
-  vars:
     # repo_url_https 変数からトークン入りURLを生成
     repo_url_tokenized: "{{ repo_url_https | regex_replace('^https://', 'https://x-access-token:' ~ github_token ~ '@') }}"
   ansible.builtin.git:
@@ -88,13 +156,20 @@
     recurse: true
   register: argocd_app_manifests
 
-- name: Apply Argo CD Application manifests
-  ansible.builtin.shell: |
-    set -o errexit -o nounset -o pipefail
-    export KUBECONFIG={{ kubeconfig_path }}
-    kubectl -n argocd apply -f "{{ item.path }}"
-  args:
-    executable: /bin/bash
+- name: Slurp Argo CD Application manifests from control plane
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
   loop: "{{ argocd_app_manifests.files }}"
+  register: argocd_app_slurped
+
+- name: Apply Argo CD Application manifests
+  kubernetes.core.k8s:
+    kubeconfig: "{{ hostvars['localhost'].local_kubeconfig_path | default(kubeconfig_path) }}"
+    state: present
+    definition: "{{ (item.content | b64decode | from_yaml_all | list) }}"
+  loop: "{{ argocd_app_slurped.results }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
 
 # （任意）最初の同期を待ちたい場合は、Application ごとに status を確認するタスクを追加可能
