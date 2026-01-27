@@ -81,7 +81,7 @@ Argo CD の機微情報
 
 運用上の注意
 - ノード名: インベントリ名と実ホスト名が異なる場合は、Kubernetes ノード名に一致するよう `k8s_node_name` を各ホストに設定してください（正しいラベリングのため）。
-- ネットワーク: kube-proxy は既定で有効、Cilium と併用します（kubeadm 既定に整合）。
+- ネットワーク: kube-proxy は既定で有効のまま、Cilium は `kubeProxyReplacement=false` で構成しています（kubeadm 既定に整合）。
 - ファイアウォール: UFW を使用している場合は `manage_ufw: true` で公開ノードの 80/443 を自動開放できます。
 - 異種アーキ: 主要イメージは multi-arch に対応（arm64/amd64）。
 

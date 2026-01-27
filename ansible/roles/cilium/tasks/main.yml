@@ -20,7 +20,7 @@
     export KUBECONFIG={{ kubeconfig_path }}
     helm upgrade --install cilium cilium/cilium \
       --namespace kube-system \
-      --set kubeProxyReplacement=true \
+      --set kubeProxyReplacement=false \
       --set nodeIPAM.enabled=true \
       --set k8sServiceHost={{ control_plane_ip }} \
       --set k8sServicePort=6443 \

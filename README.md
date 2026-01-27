@@ -81,7 +81,7 @@ Deprecated or unused variables were removed from this file. If you previously cu
 
 **Operational Notes**
 - Node names: If inventory names differ from actual node hostnames, set `k8s_node_name` per host to match the Kubernetes Node name for correct labeling/targeting.
-- Networking: Defaults keep kube-proxy enabled alongside Cilium for alignment with kubeadm defaults.
+- Networking: kube-proxy is kept enabled, and Cilium is configured with `kubeProxyReplacement=false` to align with kubeadm defaults.
 - Firewalls: Set `manage_ufw: true` to open 80/443 on public nodes automatically.
 - Mixed architectures: Roles and manifests use multi-arch images where applicable (arm64/amd64).
 
