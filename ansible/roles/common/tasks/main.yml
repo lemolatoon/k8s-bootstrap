@@ -26,6 +26,20 @@
     regexp: '^([^#].*\s+swap\s+.*)$'
     replace: '# \1'
 
+- name: Gather service facts
+  service_facts:
+
+- name: Disable multipathd units when present
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop:
+    - multipathd.service
+    - multipathd.socket
+  when: item in ansible_facts.services
+
 - name: Ensure kernel modules are configured
   copy:
     dest: /etc/modules-load.d/k8s.conf
